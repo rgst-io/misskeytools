@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  ## Misskey
+  misskey:
+    image: misskey/misskey:12.119.0
+    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.misskey.rule=Host(`misskey.internal`)"
+      - "traefik.http.routers.misskey.entrypoints=websecure"
+      - "traefik.http.services.misskey.loadbalancer.server.port=3000"
+    volumes:
+      - ./.config:/misskey/.config:ro
+
+  ## Shared
+  redis:
+    restart: always
+    image: redis:7-alpine
+
+  db:
+    restart: always
+    build: 
+      dockerfile: postgres.Dockerfile
+      context: ./.config
+    shm_size: 256mb
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: postgres
+    ports:
+      - "5432:5432"
+
+  ## Mastodon
+  mastodon:
+    image: tootsuite/mastodon:4.0.0rc1
+    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mastodon.rule=Host(`mastodon.internal`)"
+      - "traefik.http.routers.mastodon.entrypoints=websecure"
+      - "traefik.http.services.mastodon.loadbalancer.server.port=3000"
+    env_file: .config/mastodon.env
+    command: bash -c "rm -f /mastodon/tmp/pids/server.pid; bundle exec rails s -p 3000"
+
+  mastodon-sidekiq:
+    image: tootsuite/mastodon:4.0.0rc1
+    restart: always
+    env_file: .config/mastodon.env
+    command: bundle exec sidekiq
+
+  ## Load Balancer
+  traefik:
+    image: "traefik:v2.9"
+    command:
+      - "--log.level=DEBUG"
+      - '--api.insecure=true'
+      - '--accesslog=true'
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls=true"
+    ports:
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
